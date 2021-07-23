@@ -107,6 +107,23 @@ def camera_operation():
         index =index+1
     reader_file.close()
 
+def camera_operation2():
+    index=0
+    camera = PiCamera()
+    while True:
+        event.wait()
+        event.clear()
+        print("    begin to capture")
+        file_name = 'test{}.jpg'.format(index)
+        
+        # camera.resolution = (320, 240)
+        camera.capture(file_name, use_video_port = False)
+        
+        images_queue.put(file_name)
+        index =index+1
+        
+
+
 def queue_operation(server, num):
     
     while True:
@@ -127,7 +144,7 @@ if __name__ == '__main__':
     t1 = threading.Thread(target=mail_handler, args=(server, 10))
     t1.start()
     
-    t2 = threading.Thread(target=camera_operation)
+    t2 = threading.Thread(target=camera_operation2)
     t2.start()
     
     t3 = threading.Thread(target=queue_operation, args=(server, 1200))
