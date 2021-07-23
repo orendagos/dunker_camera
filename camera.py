@@ -3,6 +3,7 @@ sys.path.append('/home/pi/dunker_mail/')
 import dunker_mail as orenda_mail
 import threading
 import time
+import datetime
 
 from picamera.array import PiRGBArray
 from picamera import PiCamera
@@ -70,6 +71,7 @@ def mail_handler(server, time_interval):
         (Time, Title, From, To, Id, Msg) = orenda_mail.handle_mail(server)
         # open_file.write("dunker_capture")
         # open_file.write(Msg)
+        # print("msg: ", Msg)
         if Msg is not None and "dunker_capture" in Msg:
             event.set()
         time.sleep(time_interval)
@@ -109,19 +111,58 @@ def camera_operation():
 
 def camera_operation2():
     index=0
-    camera = PiCamera()
+    
     while True:
         event.wait()
         event.clear()
         print("    begin to capture")
+        camera = PiCamera()
         file_name = 'test{}.jpg'.format(index)
-        
         # camera.resolution = (320, 240)
         camera.capture(file_name, use_video_port = False)
+        camera.close()
         
         images_queue.put(file_name)
-        index =index+1
         
+        index =index+1
+
+
+def camera_operation_to_get_video():
+    index = 0
+    time_interval = 4
+    while True:
+        print("capture thread begin to wait", event.isSet())
+        event.wait()
+        event.clear()
+        
+        file_name = 'test{}.mp4'.format(index)
+        print("begin to get video: ", file_name)
+        camera = PiCamera()
+        camera.resolution = (640, 480)
+        camera.framerate = 32
+        rawCapture = PiRGBArray(camera)
+        # allow the camera to warmup
+        time.sleep(0.1)
+        t0 = datetime.datetime.now()
+        # VideoWriter_fourcc为视频编解码器 ('I', '4', '2', '0') —>(.avi) 、('P', 'I', 'M', 'I')—>(.avi)、('X', 'V', 'I', 'D')—>(.avi)、('T', 'H', 'E', 'O')—>.ogv、('F', 'L', 'V', '1')—>.flv、('m', 'p', '4', 'v')—>.mp4
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        # fourcc = cv2.VideoWriter_fourcc(*"MJPG")
+        # image = Image.open(imgPath + images[0])
+        videoWriter = cv2.VideoWriter(file_name, fourcc, 25, (640, 480))
+        for frame in camera.capture_continuous(rawCapture, format="bgr", use_video_port=True):
+            if (datetime.datetime.now() - t0).total_seconds() > time_interval:
+                break
+            image = frame.array
+            # print(image.shape)
+            videoWriter.write(image)
+            rawCapture.truncate(0)
+        videoWriter.release()
+        cv2.destroyAllWindows()
+        camera.close()
+        
+        images_queue.put(file_name)
+        
+        index =index+1
 
 
 def queue_operation(server, num):
@@ -141,12 +182,12 @@ if __name__ == '__main__':
     # event.set()
     server = orenda_mail.load_mail()
     
-    t1 = threading.Thread(target=mail_handler, args=(server, 10))
+    t1 = threading.Thread(target=mail_handler, args=(server, 30))
     t1.start()
     
-    t2 = threading.Thread(target=camera_operation2)
+    t2 = threading.Thread(target=camera_operation_to_get_video)
     t2.start()
     
     t3 = threading.Thread(target=queue_operation, args=(server, 1200))
     t3.start()
-    event.clear
+    # event.clear
