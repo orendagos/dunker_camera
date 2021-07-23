@@ -1,14 +1,20 @@
 import sys
-sys.path.append('/home/pi/0630/mail/')
+sys.path.append('/home/pi/dunker_mail/')
 import dunker_mail as orenda_mail
 import threading
 import time
 
 from picamera.array import PiRGBArray
 from picamera import PiCamera
-import time
 import cv2
 import numpy as np
+import os
+from queue import Queue
+import select
+event = threading.Event()
+
+(reader, writer) = os.pipe()
+images_queue=Queue(maxsize=0)
 
 def camera_test():
     # initialize the camera and grab a reference to the raw camera capture
@@ -30,52 +36,100 @@ def camera_test():
             cv2.destroyAllWindows()
             break;
 
-def hello(msg, server):
-    print("msg:", msg, "server:", type(server))
-    while True:
-        orenda_mail.handle_mail(server);
-        time.sleep(10)
-
 def send_mail_with_attachments(server, msg_str, file_attached, file_showed):
     try:
         print("begin to send_mail_with_attachments")
-        server = orenda_mail.load_mail()
         orenda_mail.send_mail_with_attachments(server, msg_str, file_attached, file_showed)
     except:
         print('error occured')
 
-def camera_operation(server, interval):
+def select_pipe(reader_file, target_str):
+    
+    input_list = list()
+    input_list.append(reader_file)
+    print("begin to select")
+    (readyInput,readyOutput,readyException) = select.select(input_list, [], [])
+    for indata in readyInput:
+        if indata == reader_file:
+            # read data
+            data = reader_file.read()
+            print("read data: ", data)
+            if target_str in data:
+                return True
+        else:
+            data = indata.read()
+            print("read data: ", data)
+    return False
+
+def mail_handler(server, time_interval):
+    # open_file = os.fdopen(writer, "w")
+    # global server
+    
+    while True:
+        # print(orenda_mail, server)
+        (Time, Title, From, To, Id, Msg) = orenda_mail.handle_mail(server)
+        # open_file.write("dunker_capture")
+        # open_file.write(Msg)
+        if Msg is not None and "dunker_capture" in Msg:
+            event.set()
+        time.sleep(time_interval)
+    # open_file.close()
+'''
+wait for event and capture img.
+if capturing success, send to a queue to send as mail attachment.
+'''
+def camera_operation():
+    reader_file = os.fdopen(reader, "r")
     index=0
     while True:
-        server = orenda_mail.load_mail()
+        event.wait()
+        event.clear()
+        print("    begin to capture")
         with PiCamera() as camera:
-            # file_name = str(index)+'test.jpg'
-            file_name = 'test.jpg'
+            file_name = 'test{}.jpg'.format(index)
             camera.resolution = (320, 240)
-            camera.framerate = 24
-            print("    begin to capture")
+            # camera.framerate = 24
             
-            time.sleep(2)
             image = np.empty((240 * 320 * 3,), dtype=np.uint8)
             camera.capture(image, 'bgr')
             image = image.reshape((240, 320, 3))
             cv2.imwrite(file_name, image)
             
             print('    capture success')
-            send_mail_with_attachments(server, file_name, file_name, file_name)
-            # orenda_mail.send_mail_with_attachments(server, file_name, file_name, file_name)
-            print('image send successfully')
-        time.sleep(interval)
-        index =index+1
+            
+            # put img info to queue.
+            images_queue.put(file_name)
+            
+            # wake queue_handler.
+                # orenda_mail.send_mail_with_attachments(server, file_name, file_name, file_name)
+                # print('image send successfully')
         
+        index =index+1
+    reader_file.close()
+
+def queue_operation(server, num):
+    
+    while True:
+        time.sleep(5)
+        if images_queue.empty():
+            continue
+        file_name = images_queue.get()
+        images_queue.task_done()
+        
+        orenda_mail.send_mail_with_attachments(server, file_name, file_name, file_name)
+        os.remove(file_name)
         
 
 if __name__ == '__main__':
+    # event.set()
     server = orenda_mail.load_mail()
-    # orenda_mail.send_mail_with_attachments(server, "123456", 'img.jpg', 'img.jpg')
     
-    t1 = threading.Thread(target=hello, args=("hawk", server))
-    # t1.start()
+    t1 = threading.Thread(target=mail_handler, args=(server, 10))
+    t1.start()
     
-    t2 = threading.Thread(target=camera_operation, args=(server, 1200))# interval is 2min
+    t2 = threading.Thread(target=camera_operation)
     t2.start()
+    
+    t3 = threading.Thread(target=queue_operation, args=(server, 1200))
+    t3.start()
+    event.clear
